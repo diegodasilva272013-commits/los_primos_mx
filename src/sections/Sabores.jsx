@@ -1,521 +1,310 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import { SABORES, ILU } from "../data.js";
-import { gsap, scrollToTarget } from "../lib/motion.js";
+import { gsap, ScrollTrigger, scrollToTarget, reduceMotion } from "../lib/motion.js";
 
 gsap.registerPlugin(useGSAP);
 
 /*
-  Four sabores, one color-morph story (CHISPA reel): full-bleed color, ONE floating HD cut-out per screen.
-  Desktop (lg+, motion allowed): pinned stage, 12 cols. Text cols 1-6 (xl 1-5), product cols 7-12 (xl 6-12):
-  the product never covers text. Outlined names + brand line art live only behind the product half.
-  Each step: the old plate leaves right, the new one drops in and lands with a settle bounce.
-  Product box has a fixed aspect (BOX); each plate is fitted from its real w/h, never wider than its natural width.
-  Mobile / reduced motion: stacked color blocks (name, line, product, body, specs), visible by default.
+  LA BARRA (reel reference): dishes pass one by one along a counter. Each dish brings its glass sign
+  (name, what it has, price), tilted in 3D and tied to the plate by a leader line with a dot.
+  - Desktop: the stage pins; each scroll step slides the conveyor one dish (always a complete, timed move).
+  - Mobile: no pin; the conveyor advances by itself while on screen, names row to jump.
+  - Reduced motion: same stage, instant changes, no auto-advance.
+  Brand color field per dish (not the reel's black), counter band + spotlight for the "bar" feel.
 */
-const PIN_QUERY = "(min-width: 1024px) and (prefers-reduced-motion: no-preference)";
-const MOBILE_MOTION = "(prefers-reduced-motion: no-preference)";
-const MASK = { clipPath: "inset(-0.3em -0.1em -0.1em -0.1em)" };
-const LAST = SABORES.length - 1;
-const BOX = 1.5;
-const HIDDEN = { visibility: "hidden", opacity: 0 };
-const STUDIO = "drop-shadow(0 36px 36px rgba(0,0,0,0.26)) drop-shadow(0 10px 12px rgba(0,0,0,0.16))";
-const ILUS = [
-  { src: ILU.almeja, w: 1000, h: 829 },
-  { src: ILU.crab, w: 1000, h: 856 },
-  { src: ILU.barco, w: 1000, h: 838 },
-];
-
-const ALT = {
-  aguachile: "Aguachile negro: camarón curtido en salsa negra con pepino, zanahoria y cebolla morada",
-  bbq: "Camarones envueltos en tocino bañados en salsa barbecue, con arroz amarillo y verdura",
-  molcajete: "Molcajete mixto con chicharrón de pescado y de pulpo, guacamole y chiles toreados",
-  estrella: "Combo Estrella con tostada de ceviche, camaroncitos empanizados, camarón envuelto y taco",
-};
-
-// Widest word of each name in Anton em units (AGUACHILE, CAMARONES, MOLCAJETE, ESTRELLA): names fill their column.
-const WORD_EM = { aguachile: 4.3, bbq: 4.5, molcajete: 4.4, estrella: 3.7 };
-const em = (id) => WORD_EM[id] || 4.6;
-
-/** Size of a w x h image fitted (contain) in a box of aspect `box`, as % of the box. */
-function fit(w, h, box) {
-  const r = w / h;
-  return r >= box ? { wp: 100, hp: (box / r) * 100 } : { wp: (r / box) * 100, hp: 100 };
-}
-
-function useMedia(query) {
-  const [match, setMatch] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
-  useEffect(() => {
-    const mql = window.matchMedia(query);
-    const on = () => setMatch(mql.matches);
-    on();
-    mql.addEventListener("change", on);
-    return () => mql.removeEventListener("change", on);
-  }, [query]);
-  return match;
-}
-
-/* Visual per-character name; the accessible name lives on the h3 (aria-label). */
-function Name({ text, charClass }) {
-  const words = text.split(" ");
-  return (
-    <span aria-hidden="true">
-      {words.map((w, wi) => (
-        <span key={wi}>
-          <span className="inline-block" style={MASK}>
-            {[...w].map((c, ci) => (
-              <span key={ci} className={`inline-block ${charClass}`}>
-                {c}
-              </span>
-            ))}
-          </span>
-          {wi < words.length - 1 ? " " : null}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/* Price first and big, then the other two specs: three columns. */
-function Specs({ specs, className = "" }) {
-  return (
-    <dl className={`grid grid-cols-[auto_auto_auto] items-end justify-start gap-x-6 sm:gap-x-9 lg:gap-x-12 ${className}`}>
-      {specs.map(([label, value], i) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-xs font-bold uppercase tracking-[0.14em]">{label}</dt>
-          <dd
-            className={`display mt-2 ${
-              i === 0 ? "text-5xl leading-[0.9] sm:text-6xl lg:text-[length:clamp(3rem,7dvh,5.5rem)]" : "text-xl leading-none sm:text-2xl lg:text-3xl"
-            }`}
-          >
-            {value}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-/* HD cut-out fitted in the product box from its real size, with neutral studio shadow. */
-function Plate({ s, eager = false }) {
-  const f = fit(s.w, s.h, BOX);
-  return (
-    <div style={{ width: `${f.wp}%`, maxWidth: s.w, aspectRatio: `${s.w} / ${s.h}` }}>
-      <img
-        src={s.img}
-        width={s.w}
-        height={s.h}
-        alt={ALT[s.id] || s.name}
-        loading={eager ? undefined : "lazy"}
-        decoding="async"
-        className="h-full w-full object-contain"
-        style={{ filter: STUDIO }}
-      />
-    </div>
-  );
-}
-
-/* Soft contact shadow placed under the plate's real bottom edge (decorative). */
-function Contact({ s, cls = "", style }) {
-  const f = fit(s.w, s.h, BOX);
-  return (
-    <span
-      aria-hidden="true"
-      className={`absolute block h-[9%] ${cls}`}
-      style={{ left: `${50 - f.wp * 0.36}%`, width: `${f.wp * 0.72}%`, top: `${50 + f.hp / 2 - 6}%`, ...style }}
-    >
-      <span className="sab-breathe block h-full w-full rounded-[50%] bg-black/35 blur-2xl" />
-    </span>
-  );
-}
-
-function Ilu({ i, className, imgClass = "" }) {
-  const it = ILUS[i % ILUS.length];
-  return (
-    <div aria-hidden="true" className={`pointer-events-none absolute ${className}`}>
-      <img src={it.src} width={it.w} height={it.h} alt="" loading="lazy" decoding="async" className={`w-full ${imgClass}`} />
-    </div>
-  );
-}
-
-/* Pinned stage (desktop, motion allowed) */
-function Stage({ active, goTo }) {
-  const s0 = SABORES[0];
-  // The outer div is React's; ScrollTrigger wraps .sab-stage in its pin-spacer.
-  return (
-    <div>
-      <div className="sab-stage relative h-[100dvh] overflow-hidden">
-        <div className="sab-bg absolute inset-0" style={{ backgroundColor: s0.color }} />
-
-        <div className="sab-ink absolute inset-0" style={{ color: s0.ink }}>
-          {/* Giant outlined names: only behind the product half, faded in from its left edge */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute bottom-0 left-1/2 right-0 top-0 flex items-center overflow-hidden opacity-20 [mask-image:linear-gradient(to_right,transparent,black_18%)]"
-          >
-            <div
-              className="sab-track display outline-text flex w-max gap-[0.5em] whitespace-nowrap pl-[6vw]"
-              style={{ fontSize: "min(30dvh, 18vw)", lineHeight: 1.1 }}
-            >
-              {SABORES.map((s) => (
-                <span key={s.id}>{s.name}</span>
-              ))}
-            </div>
-          </div>
-
-          {/* Brand line art drifting behind the product half (never under the text column) */}
-          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-1/2 right-0 overflow-hidden">
-            <Ilu i={0} className="-right-[3%] top-[7%] w-[min(26vw,440px)]" imgClass="sab-ilu opacity-[0.16]" />
-            <Ilu i={2} className="bottom-[12%] right-[6%] w-[min(21vw,360px)]" imgClass="sab-ilu opacity-[0.14]" />
-          </div>
-
-          <div className="relative mx-auto grid h-full max-w-[1400px] grid-cols-12 gap-x-8 px-8 pb-28 pt-28">
-            {/* Text: every sabor stacked in the same cell, only one visible */}
-            <div className="col-span-6 grid items-center self-center xl:col-span-5" style={{ containerType: "inline-size" }}>
-              {SABORES.map((s, i) => (
-                <article
-                  key={s.id}
-                  className="sab-copy col-start-1 row-start-1"
-                  style={{ color: s.ink, ...(i === 0 ? null : HIDDEN) }}
-                >
-                  <h3
-                    aria-label={s.name}
-                    className="display display-stack"
-                    style={{ fontSize: `min(${(80 / em(s.id)).toFixed(2)}cqw, 13dvh, 8.5rem)` }}
-                  >
-                    <Name text={s.name} charClass="sab-char" />
-                  </h3>
-                  <p className="sab-reveal mt-[2.2dvh] text-pretty text-2xl font-bold leading-tight xl:text-3xl">{s.line}</p>
-                  <p className="sab-reveal mt-2 max-w-[44ch] text-pretty text-lg font-medium leading-relaxed">{s.body}</p>
-                  <Specs specs={s.specs} className="sab-reveal mt-[3dvh]" />
-                </article>
-              ))}
-            </div>
-
-            {/* Product: one floating HD cut-out at a time, big */}
-            <div className="relative col-span-6 flex items-center justify-start xl:col-span-7">
-              <div
-                className="sab-prod-in relative w-[min(46vw,900px,calc((100dvh-240px)*1.5))] xl:w-[min(54vw,900px,calc((100dvh-240px)*1.5))]"
-                style={{ aspectRatio: BOX }}
-              >
-                <div className="sab-shadows pointer-events-none absolute inset-0">
-                  {SABORES.map((s, i) => (
-                    <Contact key={s.id} s={s} cls="sab-contact" style={i === 0 ? null : HIDDEN} />
-                  ))}
-                </div>
-                <div className="sab-tilt h-full w-full">
-                  <div className="sab-turn h-full w-full">
-                    <div className="sab-punch h-full w-full">
-                      <div className="sab-float h-full w-full">
-                        <div className="sab-spin relative h-full w-full will-change-transform">
-                          {SABORES.map((s, i) => (
-                            <div
-                              key={s.id}
-                              aria-hidden={i === active ? undefined : "true"}
-                              className="sab-prod absolute inset-0 flex items-center justify-center"
-                              style={i === 0 ? undefined : HIDDEN}
-                            >
-                              <Plate s={s} eager={i === 0} />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Progress: the four names, clickable to their step */}
-          <nav aria-label="Sabores" className="absolute inset-x-0 bottom-8">
-            <ul className="mx-auto flex max-w-[1400px] flex-wrap gap-x-2 px-6">
-              {SABORES.map((s, i) => (
-                <li key={s.id}>
-                  <button
-                    type="button"
-                    onClick={() => goTo(i)}
-                    aria-current={i === active ? "step" : undefined}
-                    className={`display group relative inline-flex min-h-12 items-center rounded-full px-4 text-2xl transition-shadow duration-300 xl:text-3xl ${
-                      i === active ? "ring-2 ring-current" : ""
-                    }`}
-                  >
-                    {s.name}
-                    <span
-                      aria-hidden="true"
-                      className={`absolute inset-x-4 bottom-2 h-[3px] origin-left rounded-full bg-current transition-transform duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${
-                        i === active ? "scale-x-0" : "scale-x-0 group-hover:scale-x-100"
-                      }`}
-                    />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* Stacked blocks: mobile/tablet, and desktop with reduced motion.
-   Mobile order: name, line, product, body, specs. lg: text cols 1-6, product cols 7-12. */
-function Stacked() {
-  return (
-    <div>
-      {SABORES.map((s, i) => (
-        <article key={s.id} style={{ backgroundColor: s.color, color: s.ink }} className="sab-block relative overflow-hidden">
-          <div className="mx-auto grid max-w-[1400px] grid-cols-1 px-4 py-16 md:px-8 md:py-24 lg:grid-flow-dense lg:grid-cols-12 lg:items-center lg:gap-x-8">
-            <h3
-              aria-label={s.name}
-              className="display display-stack lg:col-span-6 lg:col-start-1"
-              style={{ fontSize: `min(${(86 / em(s.id)).toFixed(2)}vw, 8rem)` }}
-            >
-              <Name text={s.name} charClass="sab-m-char" />
-            </h3>
-            <p className="sab-m-reveal mt-4 text-pretty text-2xl font-bold leading-tight md:text-3xl lg:col-span-6 lg:col-start-1">
-              {s.line}
-            </p>
-            <div className="relative mx-auto my-10 w-[92vw] max-w-[680px] lg:col-span-6 lg:col-start-7 lg:row-span-4 lg:row-start-1 lg:my-0 lg:w-full lg:max-w-[760px]">
-              {/* Line art behind the plate, bleeding off the right edge only */}
-              <Ilu i={i} className="-right-[16%] -top-[4%] w-[58%]" imgClass="sab-m-ilu opacity-[0.16]" />
-              <div className="sab-m-prod relative w-full" style={{ aspectRatio: BOX }}>
-                <div className="pointer-events-none absolute inset-0">
-                  <Contact s={s} />
-                </div>
-                <div className="sab-m-turn h-full w-full">
-                  <div className="sab-m-punch h-full w-full">
-                    <div className="sab-m-float relative h-full w-full">
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <Plate s={s} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <p className="sab-m-reveal max-w-[44ch] text-pretty text-lg font-medium leading-relaxed lg:col-span-6 lg:col-start-1 lg:mt-3">
-              {s.body}
-            </p>
-            <Specs specs={s.specs} className="sab-m-reveal mt-8 lg:col-span-6 lg:col-start-1" />
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
+const N = SABORES.length;
+const AUTO = 4.2; // seconds per dish on mobile
+const STUDIO = "drop-shadow(0 30px 28px rgba(0,0,0,0.3)) drop-shadow(0 8px 10px rgba(0,0,0,0.18))";
 
 export default function Sabores() {
   const root = useRef(null);
-  const stRef = useRef(null);
-  const activeRef = useRef(0);
+  const api = useRef({ jump: () => {} });
   const [active, setActive] = useState(0);
-  const pinned = useMedia(PIN_QUERY);
 
   useGSAP(
-    (_ctx, contextSafe) => {
+    () => {
+      const q = gsap.utils.selector(root);
+      const section = root.current;
+      const stage = q(".sb-stage")[0];
+      const track = q(".sb-track")[0];
+      const cards = q(".sb-card");
+      const line = q(".sb-line")[0];
+      const dot = q(".sb-dot")[0];
+      const svg = q(".sb-svg")[0];
+      const still = reduceMotion();
+      const st = { cur: 0, tl: null, pin: null, auto: null, user: false };
+
+      gsap.set(cards, { autoAlpha: 0, transformPerspective: 1100, transformOrigin: "50% 50%" });
+      gsap.set(cards[0], { autoAlpha: 1, rotationY: still ? 0 : 9, rotationZ: still ? 0 : -1.5 });
+      gsap.set(line, { strokeDasharray: 1, strokeDashoffset: 0 });
+
+      // Leader line: from the sign's dot to a point on the plate, measured from the real layout.
+      const layout = () => {
+        const s = stage.getBoundingClientRect();
+        const a = q(".sb-anchor")[0].getBoundingClientRect();
+        const t = q(".sb-target")[0].getBoundingClientRect();
+        svg.setAttribute("viewBox", `0 0 ${s.width} ${s.height}`);
+        line.setAttribute("x1", a.left + a.width / 2 - s.left);
+        line.setAttribute("y1", a.top + a.height / 2 - s.top);
+        line.setAttribute("x2", t.left - s.left);
+        line.setAttribute("y2", t.top - s.top);
+      };
+      layout();
+      const ro = new ResizeObserver(layout);
+      ro.observe(stage);
+
+      const paint = (i, dur) =>
+        gsap.to(section, { backgroundColor: SABORES[i].color, color: SABORES[i].ink, duration: dur, ease: "power2.inOut", overwrite: "auto" });
+
+      const go = (next) => {
+        if (next === st.cur) return;
+        const prev = st.cur;
+        const dir = next > prev ? 1 : -1;
+        st.cur = next;
+        setActive(next);
+        st.tl?.kill();
+        cards.forEach((c, k) => k !== prev && k !== next && gsap.set(c, { autoAlpha: 0 }));
+
+        if (still) {
+          gsap.set(track, { xPercent: (-100 / N) * next });
+          gsap.set(cards[prev], { autoAlpha: 0 });
+          gsap.set(cards[next], { autoAlpha: 1, xPercent: 0, rotationY: 0, rotationZ: 0 });
+          gsap.set(section, { backgroundColor: SABORES[next].color, color: SABORES[next].ink });
+          return;
+        }
+
+        st.tl = gsap
+          .timeline()
+          // sign lets go of the plate and flies off
+          .to(line, { strokeDashoffset: 1, duration: 0.18, ease: "power1.in" }, 0)
+          .to(dot, { scale: 0, duration: 0.18, ease: "power1.in" }, 0)
+          .to(cards[prev], { xPercent: -45 * dir, rotationY: -38 * dir, rotationZ: -4 * dir, autoAlpha: 0, duration: 0.42, ease: "power2.in" }, 0.02)
+          // the conveyor moves one dish
+          .to(track, { xPercent: (-100 / N) * next, duration: 1.05, ease: "power3.inOut" }, 0.05)
+          .add(() => paint(next, 0.75), 0.15)
+          // new sign swings in and hooks onto the new plate
+          .fromTo(
+            cards[next],
+            { xPercent: 45 * dir, rotationY: 42 * dir, rotationZ: 4 * dir, autoAlpha: 0 },
+            { xPercent: 0, rotationY: 9, rotationZ: -1.5, autoAlpha: 1, duration: 0.7, ease: "back.out(1.25)" },
+            0.6
+          )
+          .to(dot, { scale: 1, duration: 0.35, ease: "back.out(3)" }, 1.0)
+          .to(line, { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 1.05);
+      };
+
+      const stopAuto = () => {
+        st.auto?.kill();
+        st.auto = null;
+      };
+      const startAuto = () => {
+        stopAuto();
+        if (still || st.user) return;
+        st.auto = gsap.delayedCall(AUTO, () => {
+          go((st.cur + 1) % N);
+          startAuto();
+        });
+      };
+
+      api.current.jump = (i) => {
+        if (st.pin) {
+          const y = st.pin.start + ((st.pin.end - st.pin.start) * i) / (N - 1);
+          scrollToTarget(y, { offset: 0 });
+        } else {
+          st.user = true;
+          stopAuto();
+          go(i);
+        }
+      };
+
       const mm = gsap.matchMedia();
 
-      // Landing squash + elastic settle (time based, also while scrubbing).
-      const settle = contextSafe((el) => {
-        gsap.fromTo(
-          el,
-          { scaleX: 1.05, scaleY: 0.93, transformOrigin: "50% 85%" },
-          { scaleX: 1, scaleY: 1, duration: 1, ease: "elastic.out(1, 0.35)", overwrite: true }
+      // Desktop: pinned, one dish per scroll step.
+      mm.add("(min-width: 768px) and (prefers-reduced-motion: no-preference)", () => {
+        st.pin = ScrollTrigger.create({
+          trigger: stage,
+          start: "top top",
+          end: () => `+=${(N - 1) * window.innerHeight * 0.8}`,
+          pin: true,
+          invalidateOnRefresh: true,
+          snap: { snapTo: 1 / (N - 1), duration: { min: 0.2, max: 0.5 }, delay: 0.06, inertia: false, ease: "power1.inOut" },
+          onUpdate: (self) => {
+            const idx = Math.round(self.progress * (N - 1));
+            if (idx !== st.cur) go(idx);
+          },
+          onRefresh: layout,
+        });
+        return () => {
+          st.pin?.kill();
+          st.pin = null;
+        };
+      });
+
+      // Mobile: the conveyor runs by itself while the stage is on screen.
+      mm.add("(max-width: 767px) and (prefers-reduced-motion: no-preference)", () => {
+        const t = ScrollTrigger.create({
+          trigger: stage,
+          start: "top 65%",
+          end: "bottom 35%",
+          onToggle: (self) => (self.isActive ? startAuto() : stopAuto()),
+        });
+        return () => {
+          t.kill();
+          stopAuto();
+        };
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        // Entrance: the first dish slides in on the bar, its sign swings in and hooks on.
+        gsap
+          .timeline({ scrollTrigger: { trigger: stage, start: "top 72%", once: true } })
+          .from(q(".sb-slot")[0], { xPercent: 60, autoAlpha: 0, duration: 1, ease: "power3.out" }, 0)
+          .from(q(".sb-head"), { y: 24, autoAlpha: 0, duration: 0.7, ease: "power3.out" }, 0.1)
+          .from(cards[0], { xPercent: 40, rotationY: 42, autoAlpha: 0, duration: 0.8, ease: "back.out(1.25)" }, 0.35)
+          .from(dot, { scale: 0, duration: 0.35, ease: "back.out(3)" }, 0.95)
+          .from(line, { strokeDashoffset: 1, duration: 0.45, ease: "power2.out" }, 1.0)
+          .from(q(".sb-name"), { y: 18, autoAlpha: 0, duration: 0.5, stagger: 0.05, ease: "power3.out" }, 0.5);
+
+        // Idle life: plates breathe on the bar, the sign hovers, line art drifts.
+        gsap.fromTo(q(".sb-float"), { y: 5 }, { y: -7, duration: 2.8, ease: "sine.inOut", yoyo: true, repeat: -1 });
+        gsap.fromTo(q(".sb-hover"), { y: -5 }, { y: 6, duration: 3.4, ease: "sine.inOut", yoyo: true, repeat: -1, onUpdate: layout });
+        q(".sb-ilu").forEach((el, i) =>
+          gsap.fromTo(
+            el,
+            { rotation: i ? 5 : -5, y: 0 },
+            { rotation: i ? -5 : 5, y: i ? 18 : -18, duration: 12 + i * 4, ease: "sine.inOut", yoyo: true, repeat: -1 }
+          )
         );
       });
 
-      const drift = (els) =>
-        els.forEach((el, i) => {
-          gsap.fromTo(
-            el,
-            { rotation: i % 2 ? 7 : -7, x: 0, y: 0 },
-            { rotation: i % 2 ? -7 : 7, x: i % 2 ? -20 : 18, y: i % 2 ? 18 : -16, duration: 12 + i * 3, ease: "sine.inOut", yoyo: true, repeat: -1 }
-          );
-        });
-
-      if (pinned) {
-        mm.add(PIN_QUERY, () => {
-          const stage = root.current.querySelector(".sab-stage");
-          if (!stage) return;
-          const q = gsap.utils.selector(stage);
-          const copies = q(".sab-copy");
-          const prods = q(".sab-prod");
-          const shadows = q(".sab-contact");
-          const punch = q(".sab-punch")[0];
-          const track = q(".sab-track")[0];
-
-          // Idle appetite: float + breathing shadow (same period), slow +/-2deg turn (own period), drifting line art.
-          gsap.set(q(".sab-turn"), { transformPerspective: 1100 });
-          gsap.fromTo(q(".sab-float"), { y: 12 }, { y: -12, duration: 2.8, ease: "sine.inOut", yoyo: true, repeat: -1 });
-          gsap.fromTo(
-            q(".sab-breathe"),
-            { scaleX: 1, opacity: 1 },
-            { scaleX: 0.76, opacity: 0.55, duration: 2.8, ease: "sine.inOut", yoyo: true, repeat: -1 }
-          );
-          gsap.fromTo(q(".sab-spin"), { rotation: -2 }, { rotation: 2, duration: 7, ease: "sine.inOut", yoyo: true, repeat: -1 });
-          drift(q(".sab-ilu"));
-
-          // Pointer tilt +/-12deg (fine pointer).
-          let offPointer = () => {};
-          if (window.matchMedia("(pointer: fine)").matches) {
-            const tilt = q(".sab-tilt")[0];
-            gsap.set(tilt, { transformPerspective: 1000 });
-            const rx = gsap.quickTo(tilt, "rotationX", { duration: 0.8, ease: "power3.out" });
-            const ry = gsap.quickTo(tilt, "rotationY", { duration: 0.8, ease: "power3.out" });
-            const clamp = gsap.utils.clamp(-1, 1);
-            const move = (e) => {
-              const r = tilt.getBoundingClientRect();
-              ry(clamp((e.clientX - (r.left + r.width / 2)) / (window.innerWidth / 2)) * 12);
-              rx(-clamp((e.clientY - (r.top + r.height / 2)) / (window.innerHeight / 2)) * 12);
-            };
-            const leave = () => {
-              rx(0);
-              ry(0);
-            };
-            stage.addEventListener("pointermove", move);
-            stage.addEventListener("pointerleave", leave);
-            offPointer = () => {
-              stage.removeEventListener("pointermove", move);
-              stage.removeEventListener("pointerleave", leave);
-            };
-          }
-
-          // Entrance before the pin: name rises, the first plate drops in and settles. Short, once.
-          gsap
-            .timeline({ scrollTrigger: { trigger: stage, start: "top 80%", once: true } })
-            .from(copies[0].querySelectorAll(".sab-char"), { yPercent: 115, duration: 0.6, stagger: 0.03, ease: "power3.out" }, 0)
-            .from(copies[0].querySelectorAll(".sab-reveal"), { y: 30, opacity: 0, duration: 0.5, stagger: 0.07, ease: "power2.out" }, 0.15)
-            .from(q(".sab-prod-in"), { yPercent: -30, rotation: -10, scale: 0.88, autoAlpha: 0, duration: 0.6, ease: "power2.in" }, 0.05)
-            .call(() => settle(punch), null, 0.65);
-
-          const tl = gsap.timeline({
-            defaults: { ease: "none" },
-            scrollTrigger: {
-              trigger: stage,
-              start: "top top",
-              end: () => `+=${LAST * 140}%`,
-              pin: true,
-              pinSpacing: true,
-              scrub: 0.5,
-              invalidateOnRefresh: true,
-              snap: { snapTo: 1 / LAST, inertia: false, duration: { min: 0.2, max: 0.45 }, delay: 0.05, ease: "power1.inOut" },
-              onUpdate(self) {
-                const idx = Math.round(self.progress * LAST);
-                if (idx !== activeRef.current) {
-                  activeRef.current = idx;
-                  setActive(idx);
-                }
-              },
-            },
-          });
-
-          // Continuous: the plate turns gently with scroll, the outlined names slide behind it.
-          tl.fromTo(q(".sab-turn"), { rotation: -4, rotationY: -10 }, { rotation: 4, rotationY: 10, duration: LAST }, 0).to(
-            track,
-            { x: () => -Math.max(0, track.scrollWidth - window.innerWidth * 0.45), duration: LAST },
-            0
-          );
-
-          // Each step finishes well before its snap point (i), so a snapped step is always fully revealed.
-          for (let i = 1; i <= LAST; i++) {
-            const s = SABORES[i];
-            const at = i - 0.85;
-            const chars = copies[i].querySelectorAll(".sab-char");
-            const reveals = copies[i].querySelectorAll(".sab-reveal");
-            tl.to(q(".sab-bg"), { backgroundColor: s.color, duration: 0.5, ease: "power2.inOut" }, at)
-              .to(q(".sab-ink"), { color: s.ink, duration: 0.5, ease: "power2.inOut" }, at)
-              .to(copies[i - 1], { autoAlpha: 0, y: -40, duration: 0.22, ease: "power2.in" }, at)
-              .fromTo(copies[i], { autoAlpha: 0, y: 0 }, { autoAlpha: 1, duration: 0.02 }, at + 0.22)
-              .fromTo(chars, { yPercent: 115 }, { yPercent: 0, duration: 0.28, stagger: 0.015, ease: "power3.out" }, at + 0.22)
-              .fromTo(reveals, { y: 34, opacity: 0 }, { y: 0, opacity: 1, duration: 0.24, stagger: 0.04, ease: "power2.out" }, at + 0.3)
-              .to(prods[i - 1], { xPercent: 35, rotation: 14, scale: 0.82, autoAlpha: 0, duration: 0.3, ease: "power2.in" }, at)
-              .to(shadows[i - 1], { autoAlpha: 0, duration: 0.2 }, at)
-              .fromTo(
-                prods[i],
-                { xPercent: -18, yPercent: -32, rotation: -12, scale: 0.86, autoAlpha: 0 },
-                { xPercent: 0, yPercent: 0, rotation: 0, scale: 1, autoAlpha: 1, duration: 0.4, ease: "power2.in" },
-                at + 0.2
-              )
-              .fromTo(shadows[i], { autoAlpha: 0, scale: 0.5 }, { autoAlpha: 1, scale: 1, duration: 0.25, ease: "power2.out" }, at + 0.4)
-              .call(() => {
-                if ((tl.scrollTrigger?.direction ?? 1) > 0) settle(punch);
-              }, null, at + 0.6);
-          }
-          tl.set({}, {}, LAST); // timeline length == step count, so snap 1/LAST lands on rest states
-
-          stRef.current = tl.scrollTrigger;
-
-          return () => {
-            offPointer();
-            stRef.current = null;
-            activeRef.current = 0;
-            setActive(0);
-          };
-        });
-      } else {
-        mm.add(MOBILE_MOTION, () => {
-          drift(gsap.utils.toArray(".sab-m-ilu", root.current));
-          gsap.utils.toArray(".sab-block", root.current).forEach((block, i) => {
-            const dir = i % 2 === 0 ? 1 : -1;
-            const prod = block.querySelector(".sab-m-prod");
-            gsap
-              .timeline({ scrollTrigger: { trigger: block, start: "top 88%", once: true } })
-              .from(block.querySelectorAll(".sab-m-char"), { yPercent: 115, duration: 0.5, stagger: 0.025, ease: "power3.out" }, 0)
-              .from(block.querySelectorAll(".sab-m-reveal"), { y: 24, opacity: 0, duration: 0.45, stagger: 0.06, ease: "power2.out" }, 0.1);
-            // Plate drops in and lands with a settle bounce.
-            gsap.from(prod, {
-              xPercent: -12 * dir,
-              yPercent: -28,
-              rotation: -10 * dir,
-              scale: 0.88,
-              autoAlpha: 0,
-              duration: 0.55,
-              ease: "power2.in",
-              scrollTrigger: { trigger: prod, start: "top 88%", once: true },
-              onComplete: () => settle(block.querySelector(".sab-m-punch")),
-            });
-            // Idle float + slow +/-2deg turn + gentle scroll tilt.
-            gsap.set(block.querySelector(".sab-m-turn"), { transformPerspective: 900 });
-            gsap.fromTo(
-              block.querySelector(".sab-m-float"),
-              { y: 8, rotation: -2 },
-              { y: -8, rotation: 2, duration: 2.8, ease: "sine.inOut", yoyo: true, repeat: -1 }
-            );
-            gsap.fromTo(
-              block.querySelector(".sab-breathe"),
-              { scaleX: 1, opacity: 1 },
-              { scaleX: 0.8, opacity: 0.6, duration: 2.8, ease: "sine.inOut", yoyo: true, repeat: -1 }
-            );
-            gsap.fromTo(
-              block.querySelector(".sab-m-turn"),
-              { rotation: -4 * dir, rotationY: -8 * dir },
-              {
-                rotation: 4 * dir,
-                rotationY: 8 * dir,
-                ease: "none",
-                scrollTrigger: { trigger: block, start: "top bottom", end: "bottom top", scrub: true },
-              }
-            );
-          });
-        });
-      }
+      return () => {
+        ro.disconnect();
+        stopAuto();
+        st.tl?.kill();
+      };
     },
-    { scope: root, dependencies: [pinned], revertOnUpdate: true }
+    { scope: root }
   );
 
-  const goTo = (i) => {
-    const st = stRef.current;
-    if (!st) return;
-    scrollToTarget(st.start + ((st.end - st.start) * i) / LAST, { offset: 0 });
-  };
-
   return (
-    <section id="sabores" ref={root} aria-labelledby="sabores-titulo" className={pinned ? "relative" : "relative overflow-hidden"}>
-      <h2 id="sabores-titulo" className="sr-only">
-        Nuestros sabores
-      </h2>
-      {pinned ? <Stage active={active} goTo={goTo} /> : <Stacked />}
+    <section
+      id="sabores"
+      ref={root}
+      aria-labelledby="sabores-titulo"
+      className="relative overflow-hidden"
+      style={{ backgroundColor: SABORES[0].color, color: SABORES[0].ink }}
+    >
+      <div className="sb-stage relative h-[100svh] max-h-[860px] min-h-[640px] overflow-hidden md:h-[100dvh] md:max-h-none">
+        {/* Spotlight + brand line art (decorative) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0"
+          style={{ background: "radial-gradient(ellipse 55% 50% at 62% 58%, rgba(255,255,255,0.28), transparent 70%)" }}
+        />
+        <img src={ILU.barco} alt="" aria-hidden="true" width={1000} height={838} loading="lazy" className="sb-ilu pointer-events-none absolute -right-[6%] top-[9%] w-[min(42vw,520px)] opacity-[0.13]" />
+        <img src={ILU.almeja} alt="" aria-hidden="true" width={1000} height={829} loading="lazy" className="sb-ilu pointer-events-none absolute -left-[5%] bottom-[30%] hidden w-[min(24vw,340px)] opacity-[0.1] md:block" />
+
+        {/* The bar: counter band the plates rest on */}
+        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-[25%] border-t border-white/25 bg-black/20">
+          <div className="absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-white/15 to-transparent" />
+        </div>
+
+        {/* Conveyor: one full-width slot per dish */}
+        <div className="sb-track absolute inset-y-0 left-0 flex will-change-transform" style={{ width: `${N * 100}%` }}>
+          {SABORES.map((s, i) => (
+            <div key={s.id} className="sb-slot relative h-full" style={{ width: `${100 / N}%` }} aria-hidden={i === active ? undefined : "true"}>
+              <div className="absolute bottom-[13%] left-4 right-4 top-[54%] flex items-end justify-center md:bottom-[12%] md:left-[38%] md:right-[3%] md:top-[26%]">
+                <div className="sb-float relative flex h-full w-full items-end justify-center">
+                  <span aria-hidden="true" className="absolute bottom-[-3%] left-1/2 h-[9%] w-[62%] -translate-x-1/2 rounded-[50%] bg-black/40 blur-xl" />
+                  <img
+                    src={s.img}
+                    width={s.w}
+                    height={s.h}
+                    alt={`${s.name}: ${s.body}`}
+                    loading="lazy"
+                    decoding="async"
+                    className="relative max-h-full w-auto max-w-full object-contain object-bottom"
+                    style={{ filter: STUDIO }}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Leader line from the sign to the plate */}
+        <svg aria-hidden="true" className="sb-svg pointer-events-none absolute inset-0 z-10 h-full w-full" fill="none">
+          <line className="sb-line" pathLength="1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        <span aria-hidden="true" className="sb-target absolute left-[40%] top-[68%] md:left-[52%] md:top-[50%]" />
+
+        {/* Heading + glass signs */}
+        <div className="absolute left-4 right-4 top-[92px] z-20 md:left-[max(2rem,calc((100vw-1400px)/2+2rem))] md:right-auto md:top-[14%] md:w-[min(36vw,480px)]">
+          <h2 id="sabores-titulo" className="sb-head display text-2xl md:text-4xl">
+            Recién salidos de la cocina
+          </h2>
+
+          <div className="sb-hover relative mt-4 md:mt-7">
+            <div className="grid" aria-live="polite">
+              {SABORES.map((s, i) => (
+                <article
+                  key={s.id}
+                  aria-hidden={i === active ? undefined : "true"}
+                  className="sb-card col-start-1 row-start-1 rounded-[32px] bg-white/[0.16] p-5 shadow-[0_30px_60px_-24px_rgba(0,0,0,0.45),inset_0_1px_0_rgba(255,255,255,0.55)] ring-1 ring-white/45 backdrop-blur-md md:p-8"
+                  style={i === 0 ? undefined : { visibility: "hidden", opacity: 0 }}
+                >
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-80">{s.tag}</p>
+                  <h3 className="display display-stack mt-1 text-[clamp(2rem,9vw,2.75rem)] md:text-[clamp(2.5rem,4vw,4.25rem)]">{s.name}</h3>
+                  <ul className="mt-3 space-y-1 text-[0.95rem] font-semibold leading-snug md:mt-4 md:text-lg">
+                    {s.bullets.map((b) => (
+                      <li key={b} className="flex gap-2">
+                        <span aria-hidden="true" className="mt-[0.55em] h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                        {b}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 flex items-end justify-between gap-4 border-t border-current/30 pt-3 md:mt-6 md:pt-4">
+                    <span className="text-sm font-semibold md:text-base">{s.line}</span>
+                    <span className="display shrink-0 text-4xl md:text-6xl">{s.price}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <span
+              aria-hidden="true"
+              className="sb-anchor absolute -bottom-2 left-8 grid h-4 w-4 place-items-center md:-right-2 md:bottom-12 md:left-auto"
+            >
+              <span className="sb-dot block h-3.5 w-3.5 rounded-full border-2 border-current bg-blanco" />
+            </span>
+          </div>
+        </div>
+
+        {/* Dish names: jump to any dish */}
+        <div
+          role="tablist"
+          aria-label="Platillos de la barra"
+          className="absolute inset-x-0 bottom-3 z-20 flex gap-1 overflow-x-auto px-4 [scrollbar-width:none] md:bottom-6 md:justify-center md:px-8 [&::-webkit-scrollbar]:hidden"
+        >
+          {SABORES.map((s, i) => {
+            const on = i === active;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => api.current.jump(i)}
+                className={`sb-name display inline-flex min-h-12 shrink-0 items-center rounded-full px-4 text-base transition-colors duration-300 md:px-5 md:text-lg ${
+                  on ? "bg-marino text-blanco" : "bg-white/20 ring-1 ring-white/40 hover:bg-white/35"
+                }`}
+              >
+                {s.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </section>
   );
 }

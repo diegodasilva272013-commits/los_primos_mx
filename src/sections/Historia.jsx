@@ -330,7 +330,7 @@ export default function Historia() {
       id="historia"
       ref={root}
       aria-labelledby="historia-titulo"
-      className="relative bg-marino pt-28 text-blanco md:pt-36"
+      className="relative overflow-x-clip bg-marino pt-28 text-blanco md:pt-36"
     >
       <style>{`
         #historia .h-counter, #historia .h-progress, #historia .h-stage-vis { display: none; }
