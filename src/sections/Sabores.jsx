@@ -205,7 +205,7 @@ export default function Sabores() {
       // Films only play while the section is on screen; coming back replays the current film.
       const visTrig = ScrollTrigger.create({
         trigger: section,
-        start: "top bottom",
+        start: "top 40%",
         end: "bottom top",
         onToggle: (self) => {
           st.vis = self.isActive;

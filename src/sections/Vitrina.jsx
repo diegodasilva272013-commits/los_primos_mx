@@ -316,18 +316,28 @@ function Card({ p, i, size, cardRef, onOpen }) {
   const panel = PANELS[i % PANELS.length];
   const big = size === "big";
 
-  const enter = (e) => {
+  // The clip plays by itself (muted, looped) while the card is on screen, on every device: the visitor sees the
+  // dish MOVING without having to hover. It pauses and hides when the card leaves the viewport.
+  useEffect(() => {
     const v = video.current;
-    if (!v || e.pointerType !== "mouse" || reduceMotion()) return;
-    v.style.opacity = "1";
-    v.play().catch(() => {});
-  };
-  const leave = () => {
-    const v = video.current;
-    if (!v) return;
-    v.style.opacity = "0";
-    v.pause();
-  };
+    if (!v || reduceMotion()) return;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) {
+          v.style.opacity = "1";
+          v.play().catch(() => {});
+        } else {
+          v.pause();
+          v.style.opacity = "0";
+        }
+      },
+      { threshold: 0.5 }
+    );
+    io.observe(v.parentElement);
+    return () => io.disconnect();
+  }, []);
+  const enter = () => {};
+  const leave = () => {};
 
   return (
     <button
@@ -374,7 +384,7 @@ function Card({ p, i, size, cardRef, onOpen }) {
           muted
           loop
           playsInline
-          preload="none"
+          preload="metadata"
           aria-hidden="true"
           tabIndex={-1}
           className="absolute inset-0 h-full w-full object-cover opacity-0 transition-opacity duration-500"
