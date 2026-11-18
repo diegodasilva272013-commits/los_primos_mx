@@ -177,13 +177,22 @@ export default function Hero() {
       };
       audio.current.toggle = () => setAudio(!audio.current.on);
       const firstGesture = (e) => {
-        if (e.target.closest?.(".hp-sound")) return; // the pill handles itself
+        if (e.target.closest?.(".hp-sound, [data-assistant]") || window.__lpVoice) return; // handled elsewhere / on a call
         document.removeEventListener("pointerdown", firstGesture);
         document.removeEventListener("keydown", firstGesture);
         if (!audio.current.on) setAudio(true);
       };
       document.addEventListener("pointerdown", firstGesture);
       document.addEventListener("keydown", firstGesture);
+      // The voice assistant: while a call is live the hero music is off (no echo into the mic, no talking over it).
+      const onVoice = (e) => {
+        if (e.detail && e.detail.on) {
+          document.removeEventListener("pointerdown", firstGesture);
+          document.removeEventListener("keydown", firstGesture);
+          if (audio.current.on) setAudio(false);
+        }
+      };
+      window.addEventListener("lp:voice", onVoice);
 
       const syncAuto = () => {
         if (!st.auto) return;
@@ -428,6 +437,7 @@ export default function Hero() {
       return () => {
         document.removeEventListener("pointerdown", firstGesture);
         document.removeEventListener("keydown", firstGesture);
+        window.removeEventListener("lp:voice", onVoice);
         vids.forEach((v) => v && v.pause());
       };
     },

@@ -12,6 +12,7 @@ import Combos from "./sections/Combos.jsx";
 import Sucursales from "./sections/Sucursales.jsx";
 import CtaFinal from "./sections/CtaFinal.jsx";
 import Footer from "./sections/Footer.jsx";
+import Asistente from "./components/Asistente.jsx";
 
 export default function App() {
   useEffect(() => {
@@ -41,6 +42,7 @@ export default function App() {
         <CtaFinal />
       </main>
       <Footer />
+      <Asistente />
     </div>
   );
 }
