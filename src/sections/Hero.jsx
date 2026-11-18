@@ -595,7 +595,6 @@ export default function Hero() {
                                   maskImage: pl.dark ? FEATHER : FEATHER_SOFT,
                                 }}
                                 src={pl.video}
-                                poster={pl.poster}
                                 muted
                                 playsInline
                                 preload={i === 0 ? "auto" : "metadata"}

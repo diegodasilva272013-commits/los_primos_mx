@@ -316,25 +316,37 @@ function Card({ p, i, size, cardRef, onOpen }) {
   const panel = PANELS[i % PANELS.length];
   const big = size === "big";
 
-  // The clip plays by itself (muted, looped) while the card is on screen, on every device: the visitor sees the
-  // dish MOVING without having to hover. It pauses and hides when the card leaves the viewport.
+  // The clip plays by itself (muted, looped) while the card is on screen, on every device. The photo of the plate
+  // stays until the first video frame is really playing, then crossfades out (never a photo behind the film, and
+  // never an empty card while the clip buffers). Off screen: pause, photo back.
+  const plate = useRef(null);
   useEffect(() => {
     const v = video.current;
     if (!v || reduceMotion()) return;
+    const showFilm = () => {
+      v.style.opacity = "1";
+      if (plate.current) plate.current.style.opacity = "0";
+    };
+    const showPhoto = () => {
+      v.style.opacity = "0";
+      if (plate.current) plate.current.style.opacity = "1";
+    };
+    v.addEventListener("playing", showFilm);
     const io = new IntersectionObserver(
       ([e]) => {
-        if (e.isIntersecting) {
-          v.style.opacity = "1";
-          v.play().catch(() => {});
-        } else {
+        if (e.isIntersecting) v.play().catch(showPhoto);
+        else {
           v.pause();
-          v.style.opacity = "0";
+          showPhoto();
         }
       },
       { threshold: 0.5 }
     );
     io.observe(v.parentElement);
-    return () => io.disconnect();
+    return () => {
+      v.removeEventListener("playing", showFilm);
+      io.disconnect();
+    };
   }, []);
   const enter = () => {};
   const leave = () => {};
@@ -363,7 +375,7 @@ function Card({ p, i, size, cardRef, onOpen }) {
       />
 
       {/* The plate: fills and bleeds past the card */}
-      <span className="absolute inset-x-0 bottom-[16%] top-0 flex items-center justify-center">
+      <span ref={plate} className="absolute inset-x-0 bottom-[16%] top-0 flex items-center justify-center transition-opacity duration-500">
         <img
           src={p.img}
           width={p.w}
@@ -440,7 +452,6 @@ function Media({ p, color, live }) {
     return (
       <video
         src={p.video}
-        poster={p.poster || p.img}
         controls={live}
         autoPlay={live}
         muted={!live}
