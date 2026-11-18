@@ -9,18 +9,16 @@ gsap.registerPlugin(useGSAP);
 /*
   LA BARRA (reel reference): dishes pass one by one along a counter. Each dish brings its glass sign
   (name, what it has, price), tilted in 3D and tied to the plate by a leader line with a dot.
-  - Desktop: the stage pins; each scroll step slides the conveyor one dish (always a complete, timed move).
-  - Mobile: no pin; the conveyor advances by itself while on screen, names row to jump.
-  - Reduced motion: same stage, instant changes, no auto-advance.
+  - Every device: the stage pins and the SCROLL drives the bar, one dish per scroll step. Nothing advances on its
+    own; a film plays once on arrival and holds its last frame until the visitor scrolls on.
+  - Reduced motion: no pin, instant changes through the names row.
   Brand color field per dish (not the reel's black), counter band + spotlight for the "bar" feel.
 */
 const N = SABORES.length;
-const AUTO = 4.2; // seconds per dish on mobile
 const STUDIO = "drop-shadow(0 30px 28px rgba(0,0,0,0.3)) drop-shadow(0 8px 10px rgba(0,0,0,0.18))";
 // Dishes with a film: the field goes to the film's own near-black (like the hero), the clip plays once on arrival with
 // its edges feathered into that color (no frame), and holds its last frame, which is the finished dish.
 const FEATHER = "radial-gradient(ellipse closest-side at 50% 50%, #000 52%, rgba(0,0,0,0.7) 70%, rgba(0,0,0,0.3) 86%, transparent 100%)";
-const FILM_AUTO = 14; // mobile: seconds on a film dish (clip ~10s + hold)
 
 export default function Sabores() {
   const root = useRef(null);
@@ -41,7 +39,7 @@ export default function Sabores() {
       const dot = q(".sb-dot")[0];
       const svg = q(".sb-svg")[0];
       const still = reduceMotion();
-      const st = { cur: 0, tl: null, pin: null, auto: null, user: false, vis: true };
+      const st = { cur: 0, tl: null, pin: null, vis: true };
 
       /* ---------- Films (muted: the music lives only in the hero) ---------- */
       const vidOf = (i) => section.querySelector(`.sb-vid[data-i="${i}"]`);
@@ -159,38 +157,24 @@ export default function Sabores() {
           .add(() => playVid(next), 1.1);
       };
 
-      const stopAuto = () => {
-        st.auto?.kill();
-        st.auto = null;
-      };
-      const startAuto = () => {
-        stopAuto();
-        if (still || st.user) return;
-        st.auto = gsap.delayedCall(SABORES[st.cur].video ? FILM_AUTO : AUTO, () => {
-          go((st.cur + 1) % N);
-          startAuto();
-        });
-      };
-
       api.current.jump = (i) => {
         if (st.pin) {
           const y = st.pin.start + ((st.pin.end - st.pin.start) * i) / (N - 1);
           scrollToTarget(y, { offset: 0 });
         } else {
-          st.user = true;
-          stopAuto();
           go(i);
         }
       };
 
       const mm = gsap.matchMedia();
 
-      // Desktop: pinned, one dish per scroll step.
-      mm.add("(min-width: 768px) and (prefers-reduced-motion: no-preference)", () => {
+      // The scroll drives the bar on every device: the stage pins and each scroll step brings the next dish.
+      // Nothing advances on its own; a film plays once on arrival and holds its last frame.
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
         st.pin = ScrollTrigger.create({
           trigger: stage,
           start: "top top",
-          end: () => `+=${(N - 1) * window.innerHeight * 0.8}`,
+          end: () => `+=${(N - 1) * window.innerHeight * (window.innerWidth < 768 ? 0.95 : 0.8)}`,
           pin: true,
           invalidateOnRefresh: true,
           snap: { snapTo: 1 / (N - 1), duration: { min: 0.2, max: 0.5 }, delay: 0.06, inertia: false, ease: "power1.inOut" },
@@ -203,20 +187,6 @@ export default function Sabores() {
         return () => {
           st.pin?.kill();
           st.pin = null;
-        };
-      });
-
-      // Mobile: the conveyor runs by itself while the stage is on screen.
-      mm.add("(max-width: 767px) and (prefers-reduced-motion: no-preference)", () => {
-        const t = ScrollTrigger.create({
-          trigger: stage,
-          start: "top 65%",
-          end: "bottom 35%",
-          onToggle: (self) => (self.isActive ? startAuto() : stopAuto()),
-        });
-        return () => {
-          t.kill();
-          stopAuto();
         };
       });
 
@@ -257,7 +227,6 @@ export default function Sabores() {
 
       return () => {
         ro.disconnect();
-        stopAuto();
         st.tl?.kill();
         visTrig.kill();
         section.querySelectorAll(".sb-vid").forEach((v) => v.pause());
@@ -274,7 +243,7 @@ export default function Sabores() {
       className="relative overflow-hidden"
       style={{ backgroundColor: SABORES[0].color, color: SABORES[0].ink }}
     >
-      <div className="sb-stage relative h-[100svh] max-h-[860px] min-h-[640px] overflow-hidden md:h-[100dvh] md:max-h-none">
+      <div className="sb-stage relative h-[100svh] min-h-[640px] overflow-hidden md:h-[100dvh]">
         {/* Spotlight + brand line art (decorative) */}
         <div
           aria-hidden="true"

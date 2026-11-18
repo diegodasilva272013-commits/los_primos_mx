@@ -320,6 +320,7 @@ function Card({ p, i, size, cardRef, onOpen }) {
   // stays until the first video frame is really playing, then crossfades out (never a photo behind the film, and
   // never an empty card while the clip buffers). Off screen: pause, photo back.
   const plate = useRef(null);
+  const onScreen = useRef(false);
   useEffect(() => {
     const v = video.current;
     if (!v || reduceMotion()) return;
@@ -334,6 +335,7 @@ function Card({ p, i, size, cardRef, onOpen }) {
     v.addEventListener("playing", showFilm);
     const io = new IntersectionObserver(
       ([e]) => {
+        onScreen.current = e.isIntersecting;
         if (e.isIntersecting) v.play().catch(showPhoto);
         else {
           v.pause();
@@ -348,8 +350,13 @@ function Card({ p, i, size, cardRef, onOpen }) {
       io.disconnect();
     };
   }, []);
-  const enter = () => {};
-  const leave = () => {};
+  // While the visitor's mouse is on the card the clip holds still (they are looking at it); it resumes on leave.
+  const enter = (e) => {
+    if (e.pointerType === "mouse") video.current?.pause();
+  };
+  const leave = (e) => {
+    if (e.pointerType === "mouse" && onScreen.current) video.current?.play().catch(() => {});
+  };
 
   return (
     <button
