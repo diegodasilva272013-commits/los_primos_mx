@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
+import { Play } from "@phosphor-icons/react";
 import { SABORES, ILU } from "../data.js";
 import { gsap, ScrollTrigger, scrollToTarget, reduceMotion } from "../lib/motion.js";
 
@@ -23,8 +24,11 @@ const FILM_AUTO = 14; // mobile: seconds on a film dish (clip ~10s + hold)
 
 export default function Sabores() {
   const root = useRef(null);
-  const api = useRef({ jump: () => {} });
+  const api = useRef({ jump: () => {}, tap: () => {} });
   const [active, setActive] = useState(0);
+  // Dishes whose film could not autoplay (reduced motion, iPhone low-power mode, strict autoplay settings):
+  // they show a visible "Ver video" button instead of silently staying a still photo.
+  const [tap, setTap] = useState({});
 
   useGSAP(
     () => {
@@ -53,10 +57,11 @@ export default function Sabores() {
         v.currentTime = 0;
         gsap.to(v, { opacity: 1, duration: 0.5, ease: "power1.out", overwrite: true });
         const pr = v.play();
-        if (pr && pr.catch)
-          pr.catch(() => {
+        if (pr && pr.then)
+          pr.then(() => setTap((t) => (t[i] ? { ...t, [i]: false } : t))).catch(() => {
             gsap.to(v, { opacity: 0, duration: 0.3 });
             showStill(i);
+            setTap((t) => ({ ...t, [i]: true }));
           });
       };
       const stopVid = (i) => {
@@ -71,7 +76,20 @@ export default function Sabores() {
           showStill(Number(v.dataset.i));
         };
       });
-      if (still) gsap.set(q(".sb-img"), { opacity: 1 });
+      if (still) {
+        gsap.set(q(".sb-img"), { opacity: 1 });
+        setTap(Object.fromEntries(SABORES.map((d, k) => [k, Boolean(d.video)])));
+      }
+      // Visitor-initiated play always works: used by the "Ver video" button.
+      api.current.tap = (i) => {
+        const v = vidOf(i);
+        if (!v) return;
+        v.muted = true;
+        v.currentTime = 0;
+        gsap.set(imgOf(i), { opacity: 0 });
+        gsap.to(v, { opacity: 1, duration: 0.4, overwrite: true });
+        v.play().then(() => setTap((t) => ({ ...t, [i]: false }))).catch(() => {});
+      };
 
       gsap.set(cards, { autoAlpha: 0, transformPerspective: 1100, transformOrigin: "50% 50%" });
       gsap.set(cards[0], { autoAlpha: 1, rotationY: still ? 0 : 9, rotationZ: still ? 0 : -1.5 });
@@ -303,6 +321,16 @@ export default function Sabores() {
                     className="sb-img relative max-h-full w-auto max-w-full object-contain object-bottom"
                     style={{ filter: STUDIO, opacity: s.video ? 0 : 1 }}
                   />
+                  {s.video && tap[i] ? (
+                    <button
+                      type="button"
+                      onClick={() => api.current.tap(i)}
+                      className="btn btn-amarillo absolute bottom-[10%] left-1/2 z-10 -translate-x-1/2 !min-h-12"
+                    >
+                      <Play size={18} weight="fill" aria-hidden="true" />
+                      Ver video
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>

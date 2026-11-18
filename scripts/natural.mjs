@@ -16,7 +16,7 @@ const vids = () =>
 for (const vp of [{ n: "d", w: 1440, h: 900, touch: false }, { n: "m", w: 390, h: 844, touch: true }]) {
   const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h }, hasTouch: vp.touch, isMobile: vp.touch });
   const page = await ctx.newPage();
-  await page.goto("http://127.0.0.1:5173", { waitUntil: "domcontentloaded" });
+  await page.goto(process.env.BASE || "http://127.0.0.1:5173", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(5000);
   // plain wheel scrolling, like a person
   for (const id of ["sabores", "platillos"]) {
