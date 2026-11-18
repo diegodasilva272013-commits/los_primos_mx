@@ -16,6 +16,10 @@ gsap.registerPlugin(useGSAP);
 const N = SABORES.length;
 const AUTO = 4.2; // seconds per dish on mobile
 const STUDIO = "drop-shadow(0 30px 28px rgba(0,0,0,0.3)) drop-shadow(0 8px 10px rgba(0,0,0,0.18))";
+// Dishes with a film: the field goes to the film's own near-black (like the hero), the clip plays once on arrival with
+// its edges feathered into that color (no frame), and holds its last frame, which is the finished dish.
+const FEATHER = "radial-gradient(ellipse closest-side at 50% 50%, #000 52%, rgba(0,0,0,0.7) 70%, rgba(0,0,0,0.3) 86%, transparent 100%)";
+const FILM_AUTO = 14; // mobile: seconds on a film dish (clip ~10s + hold)
 
 export default function Sabores() {
   const root = useRef(null);
@@ -33,7 +37,41 @@ export default function Sabores() {
       const dot = q(".sb-dot")[0];
       const svg = q(".sb-svg")[0];
       const still = reduceMotion();
-      const st = { cur: 0, tl: null, pin: null, auto: null, user: false };
+      const st = { cur: 0, tl: null, pin: null, auto: null, user: false, vis: true };
+
+      /* ---------- Films (muted: the music lives only in the hero) ---------- */
+      const vidOf = (i) => section.querySelector(`.sb-vid[data-i="${i}"]`);
+      const imgOf = (i) => section.querySelector(`.sb-img[data-i="${i}"]`);
+      const showStill = (i) => {
+        const img = imgOf(i);
+        if (img) gsap.to(img, { opacity: 1, duration: 0.5, overwrite: true });
+      };
+      const playVid = (i) => {
+        const v = vidOf(i);
+        if (!v || still || !st.vis) return;
+        v.muted = true;
+        v.currentTime = 0;
+        gsap.to(v, { opacity: 1, duration: 0.5, ease: "power1.out", overwrite: true });
+        const pr = v.play();
+        if (pr && pr.catch)
+          pr.catch(() => {
+            gsap.to(v, { opacity: 0, duration: 0.3 });
+            showStill(i);
+          });
+      };
+      const stopVid = (i) => {
+        const v = vidOf(i);
+        if (!v) return;
+        v.pause();
+        gsap.to(v, { opacity: 0, duration: 0.3, overwrite: true });
+      };
+      section.querySelectorAll(".sb-vid").forEach((v) => {
+        v.onerror = () => {
+          gsap.set(v, { opacity: 0 });
+          showStill(Number(v.dataset.i));
+        };
+      });
+      if (still) gsap.set(q(".sb-img"), { opacity: 1 });
 
       gsap.set(cards, { autoAlpha: 0, transformPerspective: 1100, transformOrigin: "50% 50%" });
       gsap.set(cards[0], { autoAlpha: 1, rotationY: still ? 0 : 9, rotationZ: still ? 0 : -1.5 });
@@ -64,6 +102,8 @@ export default function Sabores() {
         st.cur = next;
         setActive(next);
         st.tl?.kill();
+        // Only the arriving dish may play: silence every other film right away (fast jumps kill pending timelines).
+        section.querySelectorAll(".sb-vid").forEach((v) => Number(v.dataset.i) !== next && stopVid(Number(v.dataset.i)));
         cards.forEach((c, k) => k !== prev && k !== next && gsap.set(c, { autoAlpha: 0 }));
 
         if (still) {
@@ -91,7 +131,14 @@ export default function Sabores() {
             0.6
           )
           .to(dot, { scale: 1, duration: 0.35, ease: "back.out(3)" }, 1.0)
-          .to(line, { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 1.05);
+          .to(line, { strokeDashoffset: 0, duration: 0.4, ease: "power2.out" }, 1.05)
+          // films: buffer while the bar moves, stop the one that left, start the new one once it has arrived
+          .add(() => {
+            const v = vidOf(next);
+            if (v) v.preload = "auto";
+          }, 0.1)
+          .add(() => stopVid(prev), 0.45)
+          .add(() => playVid(next), 1.1);
       };
 
       const stopAuto = () => {
@@ -101,7 +148,7 @@ export default function Sabores() {
       const startAuto = () => {
         stopAuto();
         if (still || st.user) return;
-        st.auto = gsap.delayedCall(AUTO, () => {
+        st.auto = gsap.delayedCall(SABORES[st.cur].video ? FILM_AUTO : AUTO, () => {
           go((st.cur + 1) % N);
           startAuto();
         });
@@ -155,6 +202,18 @@ export default function Sabores() {
         };
       });
 
+      // Films only play while the section is on screen; coming back replays the current film.
+      const visTrig = ScrollTrigger.create({
+        trigger: section,
+        start: "top bottom",
+        end: "bottom top",
+        onToggle: (self) => {
+          st.vis = self.isActive;
+          if (self.isActive) playVid(st.cur);
+          else stopVid(st.cur);
+        },
+      });
+
       mm.add("(prefers-reduced-motion: no-preference)", () => {
         // Entrance: the first dish slides in on the bar, its sign swings in and hooks on.
         gsap
@@ -182,6 +241,8 @@ export default function Sabores() {
         ro.disconnect();
         stopAuto();
         st.tl?.kill();
+        visTrig.kill();
+        section.querySelectorAll(".sb-vid").forEach((v) => v.pause());
       };
     },
     { scope: root }
@@ -217,15 +278,30 @@ export default function Sabores() {
               <div className="absolute bottom-[13%] left-4 right-4 top-[54%] flex items-end justify-center md:bottom-[12%] md:left-[38%] md:right-[3%] md:top-[26%]">
                 <div className="sb-float relative flex h-full w-full items-end justify-center">
                   <span aria-hidden="true" className="absolute bottom-[-3%] left-1/2 h-[9%] w-[62%] -translate-x-1/2 rounded-[50%] bg-black/40 blur-xl" />
+                  {s.video ? (
+                    /* The film: decorative (the HD photo carries the alt text), feathered into the field color. */
+                    <video
+                      data-i={i}
+                      className="sb-vid pointer-events-none absolute left-1/2 top-1/2 w-[118%] max-w-none -translate-x-1/2 -translate-y-1/2 md:w-[118%]"
+                      style={{ aspectRatio: `${s.vw} / ${s.vh}`, opacity: 0, WebkitMaskImage: FEATHER, maskImage: FEATHER }}
+                      src={s.video}
+                      muted
+                      playsInline
+                      preload="none"
+                      aria-hidden="true"
+                      tabIndex={-1}
+                    />
+                  ) : null}
                   <img
+                    data-i={i}
                     src={s.img}
                     width={s.w}
                     height={s.h}
                     alt={`${s.name}: ${s.body}`}
                     loading="lazy"
                     decoding="async"
-                    className="relative max-h-full w-auto max-w-full object-contain object-bottom"
-                    style={{ filter: STUDIO }}
+                    className="sb-img relative max-h-full w-auto max-w-full object-contain object-bottom"
+                    style={{ filter: STUDIO, opacity: s.video ? 0 : 1 }}
                   />
                 </div>
               </div>

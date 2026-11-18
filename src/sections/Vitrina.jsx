@@ -430,7 +430,7 @@ function Media({ p, color, live }) {
     return (
       <video
         src={p.video}
-        poster={p.img}
+        poster={p.poster || p.img}
         controls={live}
         autoPlay={live}
         muted={!live}
